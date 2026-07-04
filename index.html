@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tempo — velocizza i video senza rovinare l'audio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="grain"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" id="reel">
+        <svg viewBox="0 0 40 40" width="28" height="28" aria-hidden="true">
+          <circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="2.5"/>
+          <circle cx="20" cy="20" r="3.4" fill="currentColor"/>
+          <circle cx="20" cy="8" r="3" fill="currentColor" opacity="0.55"/>
+          <circle cx="30.4" cy="26" r="3" fill="currentColor" opacity="0.55"/>
+          <circle cx="9.6" cy="26" r="3" fill="currentColor" opacity="0.55"/>
+        </svg>
+      </span>
+      <div class="brand-text">
+        <h1>Tempo</h1>
+        <p>Video più veloce. Audio ancora umano.</p>
+      </div>
+    </div>
+    <div class="engine-status" id="engineStatus">
+      <span class="dot" id="engineDot"></span>
+      <span id="engineStatusText">Motore non caricato</span>
+    </div>
+  </header>
+
+  <main class="layout">
+
+    <!-- STEP 1: Upload -->
+    <section class="panel" id="dropPanel">
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept="video/*" hidden>
+        <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true">
+          <path d="M12 16V4M12 4l-4.5 4.5M12 4l4.5 4.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p class="drop-title">Trascina un video qui</p>
+        <p class="drop-sub">oppure <button class="link-btn" id="browseBtn" type="button">scegli un file</button> — MP4, WebM, MOV</p>
+      </div>
+    </section>
+
+    <!-- STEP 2: Editor (hidden until a file is loaded) -->
+    <section class="panel editor" id="editorPanel" hidden>
+
+      <div class="preview-row">
+        <div class="video-card">
+          <span class="video-card-label">Originale</span>
+          <video id="sourceVideo" controls playsinline></video>
+        </div>
+        <div class="video-card" id="resultCard" hidden>
+          <span class="video-card-label">Risultato</span>
+          <video id="resultVideo" controls playsinline></video>
+        </div>
+      </div>
+
+      <div class="controls">
+
+        <div class="speed-block">
+          <div class="speed-readout">
+            <span class="speed-value" id="speedValue">1.50</span><span class="speed-unit">×</span>
+          </div>
+
+          <!-- Signature element: a tape strip that visually compresses / stretches with speed -->
+          <div class="tape" aria-hidden="true">
+            <div class="tape-track" id="tapeTrack">
+              <div class="tape-seg"></div><div class="tape-seg"></div><div class="tape-seg"></div>
+              <div class="tape-seg"></div><div class="tape-seg"></div><div class="tape-seg"></div>
+              <div class="tape-seg"></div><div class="tape-seg"></div><div class="tape-seg"></div>
+              <div class="tape-seg"></div><div class="tape-seg"></div><div class="tape-seg"></div>
+            </div>
+          </div>
+
+          <input type="range" id="speedSlider" min="0.25" max="4" step="0.05" value="1.5" aria-label="Velocità di riproduzione">
+
+          <div class="speed-presets" id="speedPresets">
+            <button type="button" data-speed="1">1×</button>
+            <button type="button" data-speed="1.25">1.25×</button>
+            <button type="button" data-speed="1.5">1.5×</button>
+            <button type="button" data-speed="2">2×</button>
+            <button type="button" data-speed="3">3×</button>
+          </div>
+        </div>
+
+        <div class="options-block">
+          <label class="toggle">
+            <input type="checkbox" id="keepAudio" checked>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label">Mantieni l'audio, intonazione naturale</span>
+          </label>
+
+          <label class="field">
+            <span>Qualità video in uscita</span>
+            <select id="qualitySelect">
+              <option value="18">Massima (più lenta)</option>
+              <option value="20" selected>Alta (consigliata)</option>
+              <option value="23">Standard (più veloce)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="action-row">
+          <button class="primary-btn" id="processBtn" type="button">
+            <span id="processBtnLabel">Elabora video</span>
+          </button>
+          <button class="ghost-btn" id="resetBtn" type="button">Carica un altro video</button>
+        </div>
+
+        <div class="progress-wrap" id="progressWrap" hidden>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+          <p class="progress-label" id="progressLabel">Preparazione del motore ffmpeg…</p>
+        </div>
+
+        <div class="download-wrap" id="downloadWrap" hidden>
+          <a class="download-btn" id="downloadLink" download="video-velocizzato.mp4">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M12 3v12M12 15l-4-4M12 15l4-4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M5 19h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            Scarica il video in alta qualità
+          </a>
+          <p class="download-note" id="downloadMeta"></p>
+        </div>
+
+      </div>
+    </section>
+
+    <p class="footnote">
+      Tutta l'elaborazione avviene nel tuo browser tramite ffmpeg.wasm: il video non lascia mai il tuo computer.
+      L'audio viene ricampionato nel tempo (time-stretch), non solo accelerato: per questo la voce resta naturale invece che diventare acuta o robotica.
+    </p>
+  </main>
+
+  <!-- ffmpeg.wasm (single-thread build: nessun requisito di header particolari) -->
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+  <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
