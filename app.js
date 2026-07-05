@@ -1,66 +1,49 @@
-// ============================================================
-// Tempo — velocizza i video mantenendo l'audio naturale
-// Usa ffmpeg.wasm nel browser: il filtro "atempo" ricampiona
-// l'audio nel tempo (time-stretch), a differenza di un semplice
-// resample che alzerebbe il tono e lo renderebbe robotico.
-// ============================================================
-
 (() => {
   "use strict";
 
-  // ---------- DOM references ----------
-  const dropzone       = document.getElementById("dropzone");
-  const fileInput      = document.getElementById("fileInput");
-  const browseBtn      = document.getElementById("browseBtn");
-  const dropPanel      = document.getElementById("dropPanel");
-  const editorPanel    = document.getElementById("editorPanel");
+  const statusEl      = document.getElementById("status");
+  const fileInput     = document.getElementById("fileInput");
+  const fileInfo      = document.getElementById("fileInfo");
+  const optionsCard   = document.getElementById("optionsCard");
 
-  const sourceVideo    = document.getElementById("sourceVideo");
-  const resultCard     = document.getElementById("resultCard");
-  const resultVideo    = document.getElementById("resultVideo");
+  const speedSlider   = document.getElementById("speedSlider");
+  const speedInput    = document.getElementById("speedInput");
+  const keepAudio     = document.getElementById("keepAudio");
+  const qualitySelect = document.getElementById("qualitySelect");
+  const processBtn    = document.getElementById("processBtn");
 
-  const speedSlider     = document.getElementById("speedSlider");
-  const speedValueEl    = document.getElementById("speedValue");
-  const tapeTrack        = document.getElementById("tapeTrack");
-  const speedPresets      = document.getElementById("speedPresets");
+  const progressWrap  = document.getElementById("progressWrap");
+  const progressFill  = document.getElementById("progressFill");
+  const progressLabel = document.getElementById("progressLabel");
+  const errorBox      = document.getElementById("errorBox");
 
-  const keepAudio       = document.getElementById("keepAudio");
-  const qualitySelect  = document.getElementById("qualitySelect");
+  const resultCard    = document.getElementById("resultCard");
+  const resultVideo   = document.getElementById("resultVideo");
+  const downloadLink  = document.getElementById("downloadLink");
+  const downloadMeta  = document.getElementById("downloadMeta");
 
-  const processBtn      = document.getElementById("processBtn");
-  const processBtnLabel = document.getElementById("processBtnLabel");
-  const resetBtn         = document.getElementById("resetBtn");
+  const CORE_BASE = "vendor/core";
 
-  const progressWrap   = document.getElementById("progressWrap");
-  const progressFill   = document.getElementById("progressFill");
-  const progressLabel  = document.getElementById("progressLabel");
-
-  const downloadWrap   = document.getElementById("downloadWrap");
-  const downloadLink   = document.getElementById("downloadLink");
-  const downloadMeta   = document.getElementById("downloadMeta");
-
-  const engineDot        = document.getElementById("engineDot");
-  const engineStatusText = document.getElementById("engineStatusText");
-  const reelIcon          = document.getElementById("reel");
-
-  // ---------- State ----------
   let currentFile = null;
   let ffmpeg = null;
   let ffmpegReady = false;
-  let sourceObjectUrl = null;
   let resultObjectUrl = null;
 
-  const CORE_BASE = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
-
-  // ---------- Engine status helpers ----------
-  function setEngineStatus(state, text) {
-    engineDot.classList.remove("ready", "busy", "error");
-    if (state) engineDot.classList.add(state);
-    engineStatusText.textContent = text;
-    reelIcon.classList.toggle("spinning", state === "busy");
+  // ---------- helpers ----------
+  function setStatus(kind, text) {
+    statusEl.className = "status" + (kind ? " " + kind : "");
+    statusEl.textContent = text;
   }
 
-  // ---------- File loading ----------
+  function showError(msg) {
+    errorBox.hidden = false;
+    errorBox.textContent = msg;
+  }
+  function clearError() {
+    errorBox.hidden = true;
+    errorBox.textContent = "";
+  }
+
   function humanSize(bytes) {
     const units = ["B", "KB", "MB", "GB"];
     let i = 0, v = bytes;
@@ -68,111 +51,67 @@
     return `${v.toFixed(1)} ${units[i]}`;
   }
 
-  function loadFile(file) {
-    if (!file || !file.type.startsWith("video/")) {
-      alert("Seleziona un file video valido.");
+  function setOptionsEnabled(enabled) {
+    optionsCard.classList.toggle("disabled", !enabled);
+    speedSlider.disabled = !enabled;
+    speedInput.disabled = !enabled;
+    keepAudio.disabled = !enabled;
+    qualitySelect.disabled = !enabled;
+    processBtn.disabled = !enabled;
+  }
+
+  // ---------- file selection ----------
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("video/")) {
+      showError("Il file selezionato non è un video.");
       return;
     }
+    clearError();
     currentFile = file;
-
-    if (sourceObjectUrl) URL.revokeObjectURL(sourceObjectUrl);
-    sourceObjectUrl = URL.createObjectURL(file);
-    sourceVideo.src = sourceObjectUrl;
-
-    // reset any previous result
+    fileInfo.textContent = `${file.name} — ${humanSize(file.size)}`;
+    setOptionsEnabled(true);
     resultCard.hidden = true;
-    downloadWrap.hidden = true;
     progressWrap.hidden = true;
-    if (resultObjectUrl) { URL.revokeObjectURL(resultObjectUrl); resultObjectUrl = null; }
-    resultVideo.removeAttribute("src");
+  });
 
-    dropPanel.hidden = true;
-    editorPanel.hidden = false;
+  // ---------- speed sync ----------
+  function syncSpeed(value, source) {
+    const v = Math.min(4, Math.max(0.25, value));
+    if (source !== "slider") speedSlider.value = v;
+    if (source !== "input") speedInput.value = v;
   }
-
-  dropzone.addEventListener("click", () => fileInput.click());
-  browseBtn.addEventListener("click", (e) => { e.stopPropagation(); fileInput.click(); });
-  fileInput.addEventListener("change", () => {
-    if (fileInput.files[0]) loadFile(fileInput.files[0]);
+  speedSlider.addEventListener("input", () => syncSpeed(parseFloat(speedSlider.value), "slider"));
+  speedInput.addEventListener("input", () => {
+    const v = parseFloat(speedInput.value);
+    if (!isNaN(v)) syncSpeed(v, "input");
   });
 
-  ["dragenter", "dragover"].forEach(evt =>
-    dropzone.addEventListener(evt, (e) => {
-      e.preventDefault();
-      dropzone.classList.add("dragover");
-    })
-  );
-  ["dragleave", "drop"].forEach(evt =>
-    dropzone.addEventListener(evt, (e) => {
-      e.preventDefault();
-      dropzone.classList.remove("dragover");
-    })
-  );
-  dropzone.addEventListener("drop", (e) => {
-    const file = e.dataTransfer.files[0];
-    if (file) loadFile(file);
-  });
-
-  resetBtn.addEventListener("click", () => {
-    currentFile = null;
-    fileInput.value = "";
-    editorPanel.hidden = true;
-    dropPanel.hidden = false;
-  });
-
-  // ---------- Speed UI ----------
-  function updateSpeedUI(speedRaw) {
-    const speed = Math.round(speedRaw * 100) / 100;
-    speedValueEl.textContent = speed.toFixed(2);
-
-    // Signature tape visual: segment gap + scale shrink as speed rises,
-    // so the strip visibly "compresses" the faster it goes.
-    const gap = Math.max(1, 10 - speed * 2.2);
-    tapeTrack.style.gap = `${gap}px`;
-    tapeTrack.querySelectorAll(".tape-seg").forEach((seg, i) => {
-      const scaleY = Math.max(0.35, 1 - (speed - 1) * 0.18);
-      seg.style.transform = `scaleY(${scaleY})`;
-      seg.style.opacity = 0.5 + (i % 3) * 0.15;
-    });
-
-    speedPresets.querySelectorAll("button").forEach(btn => {
-      btn.classList.toggle("active", Math.abs(parseFloat(btn.dataset.speed) - speed) < 0.001);
-    });
-  }
-
-  speedSlider.addEventListener("input", () => updateSpeedUI(parseFloat(speedSlider.value)));
-  speedPresets.addEventListener("click", (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
-    speedSlider.value = btn.dataset.speed;
-    updateSpeedUI(parseFloat(btn.dataset.speed));
-  });
-  updateSpeedUI(parseFloat(speedSlider.value));
-
-  // ---------- ffmpeg.wasm setup ----------
+  // ---------- ffmpeg load ----------
   async function ensureFfmpegLoaded() {
     if (ffmpegReady) return;
+
+    if (typeof FFmpegWASM === "undefined" || typeof FFmpegUtil === "undefined") {
+      throw new Error(
+        "Le librerie ffmpeg.wasm non sono state caricate. Verifica che la cartella 'vendor' sia presente accanto a index.html e che la pagina sia servita via http:// (non aperta con doppio click)."
+      );
+    }
 
     const { FFmpeg } = FFmpegWASM;
     const { toBlobURL } = FFmpegUtil;
 
     ffmpeg = new FFmpeg();
-
-    ffmpeg.on("log", ({ message }) => {
-      // Utile per debug in console, non mostrato all'utente.
-      console.debug("[ffmpeg]", message);
-    });
-
     ffmpeg.on("progress", ({ progress }) => {
       const pct = Math.min(100, Math.max(0, progress * 100));
-      progressFill.style.width = `${pct}%`;
-      progressLabel.textContent = `Elaborazione in corso… ${pct.toFixed(0)}%`;
+      progressFill.style.width = pct + "%";
+      progressLabel.textContent = `Elaborazione: ${pct.toFixed(0)}%`;
     });
 
-    setEngineStatus("busy", "Caricamento motore ffmpeg…");
+    setStatus("busy", "Caricamento motore…");
     progressWrap.hidden = false;
-    progressLabel.textContent = "Caricamento motore ffmpeg (una volta sola, ~30 MB)…";
-    progressFill.style.width = "8%";
+    progressLabel.textContent = "Caricamento motore (una sola volta)…";
+    progressFill.style.width = "5%";
 
     await ffmpeg.load({
       coreURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, "text/javascript"),
@@ -180,57 +119,52 @@
     });
 
     ffmpegReady = true;
-    setEngineStatus("ready", "Motore pronto");
+    setStatus("ready", "Motore pronto");
   }
 
-  // Builds a chain of atempo filters, since a single atempo stage
-  // only supports factors between 0.5 and 2.0. Chaining stages
-  // reaches any overall speed while keeping natural-sounding pitch.
+  // atempo supporta solo il range 0.5–2.0 per stadio: per velocità
+  // fuori da questo range si incatenano più stadi mantenendo l'audio naturale.
   function buildAtempoChain(speed) {
     const factors = [];
     let remaining = speed;
-
     if (remaining >= 0.5 && remaining <= 2.0) {
       factors.push(remaining);
     } else if (remaining > 2.0) {
-      while (remaining > 2.0) {
-        factors.push(2.0);
-        remaining /= 2.0;
-      }
+      while (remaining > 2.0) { factors.push(2.0); remaining /= 2.0; }
       factors.push(remaining);
     } else {
-      while (remaining < 0.5) {
-        factors.push(0.5);
-        remaining /= 0.5;
-      }
+      while (remaining < 0.5) { factors.push(0.5); remaining /= 0.5; }
       factors.push(remaining);
     }
-
     return factors.map(f => `atempo=${f.toFixed(6)}`).join(",");
   }
 
-  // ---------- Processing ----------
+  function guessExtension(file) {
+    const m = file.name.match(/\.[^.]+$/);
+    return m ? m[0] : ".mp4";
+  }
+
+  // ---------- process ----------
   async function processVideo() {
     if (!currentFile) return;
 
+    clearError();
     processBtn.disabled = true;
-    processBtnLabel.textContent = "Elaborazione…";
-    downloadWrap.hidden = true;
     resultCard.hidden = true;
 
     try {
       await ensureFfmpegLoaded();
 
-      progressWrap.hidden = false;
-      progressFill.style.width = "0%";
-      progressLabel.textContent = "Lettura del file…";
-      setEngineStatus("busy", "Elaborazione in corso…");
-
       const { fetchFile } = FFmpegUtil;
-      const speed = parseFloat(speedSlider.value);
+      const speed = parseFloat(speedInput.value);
       const crf = qualitySelect.value;
       const inputName = "input_" + Date.now().toString(36) + guessExtension(currentFile);
       const outputName = "output.mp4";
+
+      progressWrap.hidden = false;
+      progressFill.style.width = "0%";
+      progressLabel.textContent = "Lettura del file…";
+      setStatus("busy", "Elaborazione in corso…");
 
       await ffmpeg.writeFile(inputName, await fetchFile(currentFile));
 
@@ -260,7 +194,7 @@
         ];
       }
 
-      progressLabel.textContent = "Elaborazione in corso… 0%";
+      progressLabel.textContent = "Elaborazione: 0%";
       await ffmpeg.exec(args);
 
       const data = await ffmpeg.readFile(outputName);
@@ -270,35 +204,30 @@
       resultObjectUrl = URL.createObjectURL(blob);
 
       resultVideo.src = resultObjectUrl;
-      resultCard.hidden = false;
-
       downloadLink.href = resultObjectUrl;
       const baseName = currentFile.name.replace(/\.[^.]+$/, "");
       downloadLink.download = `${baseName}-${speed.toFixed(2)}x.mp4`;
-      downloadMeta.textContent = `${humanSize(blob.size)} · ${speed.toFixed(2)}× · pronto per il download`;
-      downloadWrap.hidden = false;
+      downloadMeta.textContent = `${humanSize(blob.size)} · ${speed.toFixed(2)}×`;
+      resultCard.hidden = false;
 
-      progressLabel.textContent = "Completato.";
-      progressFill.style.width = "100%";
-      setEngineStatus("ready", "Motore pronto");
-
-      // cleanup fs to free memory for next run
       try { await ffmpeg.deleteFile(inputName); await ffmpeg.deleteFile(outputName); } catch (_) {}
 
-      setTimeout(() => { progressWrap.hidden = true; }, 1200);
+      setStatus("ready", "Motore pronto");
+      progressLabel.textContent = "Completato.";
+      progressFill.style.width = "100%";
+      setTimeout(() => { progressWrap.hidden = true; }, 1000);
     } catch (err) {
       console.error(err);
-      setEngineStatus("error", "Errore durante l'elaborazione");
-      progressLabel.textContent = "Si è verificato un errore. Riprova con un altro file o un'altra velocità.";
+      setStatus("error", "Errore");
+      progressWrap.hidden = true;
+      showError(
+        err && err.message
+          ? err.message
+          : "Si è verificato un errore durante l'elaborazione. Riprova con un altro file o un'altra velocità."
+      );
     } finally {
       processBtn.disabled = false;
-      processBtnLabel.textContent = "Elabora video";
     }
-  }
-
-  function guessExtension(file) {
-    const m = file.name.match(/\.[^.]+$/);
-    return m ? m[0] : ".mp4";
   }
 
   processBtn.addEventListener("click", processVideo);
