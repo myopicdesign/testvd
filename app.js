@@ -22,7 +22,7 @@
   const downloadLink  = document.getElementById("downloadLink");
   const downloadMeta  = document.getElementById("downloadMeta");
 
-  const CORE_BASE = "vendor/core";
+  const CORE_BASE = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
 
   let currentFile = null;
   let ffmpeg = null;
